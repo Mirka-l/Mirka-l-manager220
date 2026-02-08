@@ -222,7 +222,7 @@ class Paradise(DBSchema, SSDatabase):
             return (f"KudosHistory(id={self.id!r}, giver={self.giver!r}, "
                     f"receiver={self.receiver!r}, points={self.points!r}, "
                     f"round={self.round_id!r})")
-
+        
     class KudosTotals(Base):
         __tablename__ = "kudos_totals"
         receiver: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -231,6 +231,13 @@ class Paradise(DBSchema, SSDatabase):
 
         def __repr__(self) -> str:
             return f"KudosTotals(receiver={self.receiver!r}, score={self.total_score!r})"
+        
+    def get_player(self, ckey: str) -> Player | None:
+        ckey = sanitize_ckey(ckey)
+        with self.Session() as session:
+            result = session.query(self.Player).where(
+                self.Player.ckey == ckey).first()
+            return result or None
 
     def get_characters(self, ckey: str) -> Sequence[Character]:
         ckey = sanitize_ckey(ckey)
