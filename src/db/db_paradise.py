@@ -206,7 +206,7 @@ class Paradise(DBSchema, SSDatabase):
                 f"Admin(id={self.id!r}, ckey={self.ckey!r}, display_rank={self.display_rank!r}, "
                 f"permissions_rank={self.permissions_rank!r})"
             )
-                   
+
     def get_player(self, ckey: str) -> Player | None:
         ckey = sanitize_ckey(ckey)
         with self.Session() as session:
