@@ -221,36 +221,25 @@ def run_bot():
         if action == 0:
             await interaction.response.send_message("**Выполняю перезагрузку...**", ephemeral=False)
             print("\n[SYSTEM] Перезагрузка по команде пользователя...")
-            # Выходим с кодом 0, батник подхватит и запустит снова
             os._exit(0)
         
         elif action == 1:
             await interaction.response.send_message("**Выключение...**")
         
-            # Чтобы батник не перезапустил бота, нам нужно либо "сломать" цикл, 
-            # либо просто закрыть бота и вручную закрыть окно. 
-            # Самый надежный способ - остановить клиент и не выходить из скрипта (зависнуть), 
-            # либо просто выйти и быстро закрыть окно CMD.
-            
-            # ПРАВКА: Принудительно закрываем процесс CMD (батник), в котором запущен бот
             print("\n[SYSTEM] Завершение работы...")
             os.system("taskkill /F /T /PID %d" % os.getppid())
             await interaction.client.close()
         
     @tree.command(name="sync", description="Sync.")
     async def sync(interaction: discord.Interaction):
-        # Публичное сообщение, чтобы все видели статус
         await interaction.response.defer(ephemeral=False)
     
         try:
-            print(f"[SYSTEM] Начата полная синхронизация для сервера: {interaction.guild.name}")
+            print(f"[SYSTEM] Начата синхронизация для сервера: {interaction.guild.name}")
         
-            # 1. Сначала очищаем локальные команды этого сервера, чтобы не было дублей
             tree.clear_commands(guild=interaction.guild)
             await tree.sync(guild=interaction.guild)
         
-            # 2. Теперь синхронизируем глобальные команды
-            # Это "протолкнет" изменения во весь Discord
             synced = await tree.sync()
         
             await interaction.followup.send(
@@ -265,14 +254,12 @@ def run_bot():
     @tree.command(name="привязать", description="Привязка игрового аккаунта.")
     @app_commands.describe(key="Ваш игровой CKey")
     async def link_public(interaction: discord.Interaction, key: str):
-        # 1. Говорим Дискорду, что мы начали работу
         await interaction.response.defer(ephemeral=False)
     
         user = interaction.user
         print(f"[DEBUG] Запущена команда для {user.name}, ключ: {key}")
 
         try:
-        # 2. Вызываем логику API
             result = await CENTRAL.link_player(key, user.id)
             print(f"[DEBUG] Получен ответ от API: {result}")
 
@@ -293,20 +280,18 @@ def run_bot():
             print(f"[CRITICAL ERROR] Ошибка в команде привязать: {e}")
             await interaction.followup.send("Произошла критическая ошибка при обработке запроса.")
         
-    # --- КУДОСЫ (РЕПУТАЦИЯ) ---
+    # --- КУДОСЫ  ---
 
     @tree.command(name="рейтинг", description="ТОП-10 игроков по кудосам.")
     async def rating(interaction: discord.Interaction):
         await interaction.response.defer()
         try:
-            # Запрос к API вместо БД
             top_data = await CENTRAL.get_kudos_rating(limit=10)
             
             if not top_data:
                 await interaction.followup.send("Рейтинг пока пуст.")
                 return
             
-            # Ищем ckey автора для подсветки
             user_info = await CENTRAL.get_player_by_discord(interaction.user.id)
             user_ckey = user_info.ckey if user_info else None
             
@@ -316,13 +301,10 @@ def run_bot():
                 ckey = entry.get('ckey', 'Unknown')
                 score = entry.get('score', 0.0)
                 
-                # Чистый номер без медалей
                 rank_display = f"` {i}. `"
                 
-                # Подсветка вызвавшего игрока жирным
                 name_display = f"**{ckey}**" if ckey == user_ckey else f"{ckey}"
                 
-                # Красивое форматирование числа
                 formatted_score = f"{score:.2f}".rstrip('0').rstrip('.')
                 
                 description += f"{rank_display} {name_display:15} — **{formatted_score}** ⭐\n"
@@ -352,11 +334,9 @@ def run_bot():
 
             log_text = ""
             for h in history:
-                # Парсим дату
                 dt = datetime.fromisoformat(h['timestamp'].replace('Z', '+00:00'))
                 date_str = dt.strftime("%d.%m %H:%M")
                 
-                # Собираем строку без поинтов
                 log_text += f" `{date_str}` | От: `{h['giver']:12}` | Р: `{h['round_id']}`\n"
 
             embed = discord.Embed(
@@ -376,7 +356,6 @@ def run_bot():
         await interaction.response.defer()
         
         try:
-            # Всегда берем discord_id того, кто нажал на команду
             target_id = interaction.user.id
             data = await CENTRAL.get_player_kudos_stats(discord_id=target_id)
 
@@ -389,7 +368,6 @@ def run_bot():
             next_score = data.get('next_player_score')
             target_ckey = data.get('receiver', "Неизвестно")
 
-            # --- ТВОЙ ФИРМЕННЫЙ ВИЗУАЛ (БЕЗ ИЗМЕНЕНИЙ) ---
             embed = discord.Embed(title=f"🏆 Репутация игрока: {target_ckey}", timestamp=discord.utils.utcnow())
             bar_length = 10
             display_score = f"{score:.2f}".rstrip('0').rstrip('.')
