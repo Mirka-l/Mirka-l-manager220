@@ -206,13 +206,31 @@ class Paradise(DBSchema, SSDatabase):
                 f"Admin(id={self.id!r}, ckey={self.ckey!r}, display_rank={self.display_rank!r}, "
                 f"permissions_rank={self.permissions_rank!r})"
             )
+           
+    class KudosHistory(Base):
+        __tablename__ = "kudos_history"
 
-    def get_player(self, ckey: str) -> Player | None:
-        ckey = sanitize_ckey(ckey)
-        with self.Session() as session:
-            result = session.query(self.Player).where(
-                self.Player.ckey == ckey).first()
-            return result or None
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        giver: Mapped[str] = mapped_column(String(32), nullable=False)
+        receiver: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Здесь тоже Float, чтобы видеть, сколько именно пришло в логах
+        points: Mapped[float] = mapped_column(default=1.0)
+        round_id: Mapped[int] = mapped_column(Integer, nullable=False)
+        timestamp: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+        def __repr__(self) -> str:
+            return (f"KudosHistory(id={self.id!r}, giver={self.giver!r}, "
+                    f"receiver={self.receiver!r}, points={self.points!r}, "
+                    f"round={self.round_id!r})")
+
+    class KudosTotals(Base):
+        __tablename__ = "kudos_totals"
+        receiver: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # ПРОВЕРЬ ТУТ: должно быть float или Float()
+        total_score: Mapped[float] = mapped_column(default=0.0)
+
+        def __repr__(self) -> str:
+            return f"KudosTotals(receiver={self.receiver!r}, score={self.total_score!r})"
 
     def get_characters(self, ckey: str) -> Sequence[Character]:
         ckey = sanitize_ckey(ckey)
@@ -281,3 +299,62 @@ class Paradise(DBSchema, SSDatabase):
                 )
                 session.add(change_db)
             session.commit()
+
+    def get_kudos_rating(self, limit: int = 10):
+        with self.Session() as session:
+            query = (
+                select(self.KudosTotals.receiver, self.KudosTotals.total_score)
+                .order_by(self.KudosTotals.total_score.desc())
+                .limit(limit)
+            )
+            return session.execute(query).all()
+
+    def get_player_kudos_count(self, ckey: str) -> float:
+        with self.Session() as session:
+        # Прямой запрос без лишних преобразований
+            query = select(self.KudosTotals.total_score).where(self.KudosTotals.receiver == ckey)
+            result = session.scalar(query)
+        
+        # Если result пришел, возвращаем его как есть (float)
+            if result is not None:
+                return float(result) 
+            return 0.0
+
+    def get_player_position(self, score: float) -> int:
+        try:
+            with self.Session() as session:
+                # ВАЖНО: используем строго '>', чтобы не считать самого себя
+                query = select(func.count(self.KudosTotals.receiver)).where(self.KudosTotals.total_score > score)
+                result = session.scalar(query)
+                
+                # Если база нашла 1 человека выше (тебя), то (1) + 1 вернет 2-е место.
+                # return int(result or 0) + 1
+                return result
+        except Exception as e:
+            print(f"Position Error: {e}")
+            return 1
+
+    def get_admin_kudos_info(self, target_ckey: str, limit: int = 20):
+        with self.Session() as session:
+            query = (
+                select(self.KudosHistory)
+                .where(self.KudosHistory.receiver == target_ckey)
+                .order_by(self.KudosHistory.timestamp.desc())
+                .limit(limit)
+            )
+            return session.scalars(query).all()
+        
+    def get_ckey_by_discord(self, discord_id: int) -> str | None:
+        # Так как в таблице Player нет discord_id, просто пропускаем этот шаг
+        return None
+    
+    def get_next_player_score(self, score: float) -> float | None:
+        try:
+            with self.Session() as session:
+                # Ищем минимальный балл среди тех, кто выше
+                query = select(func.min(self.KudosTotals.total_score)).where(self.KudosTotals.total_score > score)
+                result = session.scalar(query)
+                return float(result) if result is not None else None
+        except Exception as e:
+            print(f"Next Score Error: {e}")
+            return None

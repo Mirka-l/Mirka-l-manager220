@@ -4,7 +4,7 @@ from typing import get_args
 import asyncio
 
 import discord
-from discord import app_commands
+from discord import app_commands, Embed, Color
 from discord.ext import tasks
 # Includes a lot of other internal libs
 from api.central import Central, Player
@@ -214,6 +214,220 @@ def run_bot():
         await interaction.followup.send(f"Список нотесов **{ckey}**:")
         for embed in embeds:
             await interaction.channel.send(embed=embed)
+        
+    @tree.command(name="рестарт", description="Управление процессом бота.")
+    @app_commands.describe(action="0 - Перезагрузить бота, 1 - Полностью выключить")
+    async def restart(interaction: discord.Interaction, action: int):
+        if action == 0:
+            await interaction.response.send_message("**Выполняю перезагрузку...**", ephemeral=False)
+            print("\n[SYSTEM] Перезагрузка по команде пользователя...")
+            # Выходим с кодом 0, батник подхватит и запустит снова
+            os._exit(0)
+        
+        elif action == 1:
+            await interaction.response.send_message("**Выключение...**")
+        
+            # Чтобы батник не перезапустил бота, нам нужно либо "сломать" цикл, 
+            # либо просто закрыть бота и вручную закрыть окно. 
+            # Самый надежный способ - остановить клиент и не выходить из скрипта (зависнуть), 
+            # либо просто выйти и быстро закрыть окно CMD.
+            
+            # ПРАВКА: Принудительно закрываем процесс CMD (батник), в котором запущен бот
+            print("\n[SYSTEM] Завершение работы...")
+            os.system("taskkill /F /T /PID %d" % os.getppid())
+            await interaction.client.close()
+        
+    @tree.command(name="sync", description="Sync.")
+    async def sync(interaction: discord.Interaction):
+        # Публичное сообщение, чтобы все видели статус
+        await interaction.response.defer(ephemeral=False)
+    
+        try:
+            print(f"[SYSTEM] Начата полная синхронизация для сервера: {interaction.guild.name}")
+        
+            # 1. Сначала очищаем локальные команды этого сервера, чтобы не было дублей
+            tree.clear_commands(guild=interaction.guild)
+            await tree.sync(guild=interaction.guild)
+        
+            # 2. Теперь синхронизируем глобальные команды
+            # Это "протолкнет" изменения во весь Discord
+            synced = await tree.sync()
+        
+            await interaction.followup.send(
+                f"**Синхронизация завершена!**\n"
+                f"Synced (**{len(synced)}** commands).\n"
+            )
+        
+        except Exception as e:
+            print(f"[ERROR] Ошибка синхронизации: {e}")
+            await interaction.followup.send(f"Error {e}")
+            
+    @tree.command(name="привязать", description="Привязка игрового аккаунта.")
+    @app_commands.describe(key="Ваш игровой CKey")
+    async def link_public(interaction: discord.Interaction, key: str):
+        # 1. Говорим Дискорду, что мы начали работу
+        await interaction.response.defer(ephemeral=False)
+    
+        user = interaction.user
+        print(f"[DEBUG] Запущена команда для {user.name}, ключ: {key}")
+
+        try:
+        # 2. Вызываем логику API
+            result = await CENTRAL.link_player(key, user.id)
+            print(f"[DEBUG] Получен ответ от API: {result}")
+
+            if result["status"] == "success":
+                embed = discord.Embed(
+                    title="🔗 Аккаунт успешно привязан",
+                    description=f"Аккаунт `{key}` теперь связан с {user.mention}",
+                    color=discord.Color.green()
+                )
+                embed.set_thumbnail(url=user.display_avatar.url)
+                embed.set_footer(text="Синхронизация SSCentral")
+            
+                await interaction.followup.send(embed=embed)
+            else:
+                await interaction.followup.send(f"**Ошибка:** {result['message']}")
+
+        except Exception as e:
+            print(f"[CRITICAL ERROR] Ошибка в команде привязать: {e}")
+            await interaction.followup.send("Произошла критическая ошибка при обработке запроса.")
+        
+    # --- КУДОСЫ (РЕПУТАЦИЯ) ---
+
+    @tree.command(name="рейтинг", description="ТОП-10 игроков по кудосам.")
+    async def rating(interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            # Запрос к API вместо БД
+            top_data = await CENTRAL.get_kudos_rating(limit=10)
+            
+            if not top_data:
+                await interaction.followup.send("Рейтинг пока пуст.")
+                return
+            
+            # Ищем ckey автора для подсветки
+            user_info = await CENTRAL.get_player_by_discord(interaction.user.id)
+            user_ckey = user_info.ckey if user_info else None
+            
+            description = ""
+
+            for i, entry in enumerate(top_data, 1):
+                ckey = entry.get('ckey', 'Unknown')
+                score = entry.get('score', 0.0)
+                
+                # Чистый номер без медалей
+                rank_display = f"` {i}. `"
+                
+                # Подсветка вызвавшего игрока жирным
+                name_display = f"**{ckey}**" if ckey == user_ckey else f"{ckey}"
+                
+                # Красивое форматирование числа
+                formatted_score = f"{score:.2f}".rstrip('0').rstrip('.')
+                
+                description += f"{rank_display} {name_display:15} — **{formatted_score}** ⭐\n"
+            
+            embed = discord.Embed(
+                title="🏆 Таблица лидеров репутации", 
+                color=0xFFD700,
+                description=description,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_footer(text="Данные SSCentral • Обновляется в реальном времени")
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            logging.error(f"Rating error: {e}")
+            await interaction.followup.send("Не удалось загрузить рейтинг.")
+
+    @tree.command(name="чек_кудосов", description="История похвал (для админов).")
+    # @app_commands.checks.has_any_role(*ADMIN_ROLES)
+    async def check_kudos(interaction: discord.Interaction, ckey: str):
+        await interaction.response.defer()
+        try:
+            history = await CENTRAL.admin_check_kudos(ckey)
+            if not history:
+                await interaction.followup.send(f"История для `{ckey}` не найдена.")
+                return
+
+            log_text = ""
+            for h in history:
+                # Парсим дату
+                dt = datetime.fromisoformat(h['timestamp'].replace('Z', '+00:00'))
+                date_str = dt.strftime("%d.%m %H:%M")
+                
+                # Собираем строку без поинтов
+                log_text += f" `{date_str}` | От: `{h['giver']:12}` | Р: `{h['round_id']}`\n"
+
+            embed = discord.Embed(
+                title=f"📜 Логи репутации: {ckey}", 
+                description=log_text[:4000], 
+                color=0x5865F2,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_footer(text=f"Всего записей: {len(history)}")
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logging.error(f"Check kudos error: {e}")
+            await interaction.followup.send(f"Ошибка при получении логов.")
+
+    @tree.command(name="кудос", description="Показать вашу репутацию.")
+    async def kudos_me(interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        try:
+            # Всегда берем discord_id того, кто нажал на команду
+            target_id = interaction.user.id
+            data = await CENTRAL.get_player_kudos_stats(discord_id=target_id)
+
+            if not data:
+                await interaction.followup.send("Данные не найдены.")
+                return
+
+            score = data.get('total_score', 0.0)
+            position = data.get('position', 0)
+            next_score = data.get('next_player_score')
+            target_ckey = data.get('receiver', "Неизвестно")
+
+            # --- ТВОЙ ФИРМЕННЫЙ ВИЗУАЛ (БЕЗ ИЗМЕНЕНИЙ) ---
+            embed = discord.Embed(title=f"🏆 Репутация игрока: {target_ckey}", timestamp=discord.utils.utcnow())
+            bar_length = 10
+            display_score = f"{score:.2f}".rstrip('0').rstrip('.')
+
+            if score > 0:
+                if position == 1:
+                    embed.color = discord.Color.gold()
+                    bar = "🟧" * bar_length
+                    progress_text = "**Вы лидер рейтинга!**"
+                else:
+                    embed.color = discord.Color.from_rgb(46, 204, 113)
+                    if next_score and next_score > score:
+                        diff = next_score - score
+                        percent = score / next_score
+                        filled = min(max(1, round(percent * bar_length)), bar_length - 1)
+                        bar = "🟩" * filled + "⬜" * (bar_length - filled)
+                        progress_text = f"До следующего места: **{f'{diff:.2f}'.rstrip('0').rstrip('.')}** поинтов"
+                    else:
+                        bar = "🟩" * 9 + "⬜" * 1
+                        progress_text = "Вы почти на вершине!"
+            else:
+                embed.color = discord.Color.light_gray()
+                bar = "⬜" * bar_length
+                progress_text = "Не в рейтинге."
+                position = "—"
+
+            embed.add_field(name="⭐ Очки похвал", value=f"**{display_score}**\n{bar}\n{progress_text}", inline=False)
+            embed.add_field(name="🏅 Место в ТОП", value=f"**#{position}**" if score > 0 else "**Вне рейтинга**", inline=True)
+
+            if interaction.user.display_avatar:
+                embed.set_thumbnail(url=interaction.user.display_avatar.url)
+            embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logging.error(f"Kudos error: {e}")
+            await interaction.followup.send("Произошла ошибка при получении данных.")
 
     # region Xenowl
 
@@ -662,7 +876,7 @@ def run_bot():
     @client.event
     async def on_ready():
         await tree.sync()
-        await client.change_presence(activity=discord.Game(name="Поднятие TTS с нуля"))
+        await client.change_presence(activity=discord.Game(name="Самое время поднимать парадиз!"))
 
         for channel in config["discord"]["channels"]:
             CHANNEL_CACHE[channel] = client.get_partial_messageable(
