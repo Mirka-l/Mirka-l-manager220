@@ -214,198 +214,125 @@ def run_bot():
         await interaction.followup.send(f"Список нотесов **{ckey}**:")
         for embed in embeds:
             await interaction.channel.send(embed=embed)
-        
-    @tree.command(name="рестарт", description="Управление процессом бота.")
-    @app_commands.describe(action="0 - Перезагрузить бота, 1 - Полностью выключить")
-    async def restart(interaction: discord.Interaction, action: int):
-        if action == 0:
-            await interaction.response.send_message("**Выполняю перезагрузку...**", ephemeral=False)
-            print("\n[SYSTEM] Перезагрузка по команде пользователя...")
-            os._exit(0)
-        
-        elif action == 1:
-            await interaction.response.send_message("**Выключение...**")
-        
-            print("\n[SYSTEM] Завершение работы...")
-            os.system("taskkill /F /T /PID %d" % os.getppid())
-            await interaction.client.close()
-        
-    @tree.command(name="sync", description="Sync.")
-    async def sync(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-    
-        try:
-            print(f"[SYSTEM] Начата синхронизация для сервера: {interaction.guild.name}")
-        
-            tree.clear_commands(guild=interaction.guild)
-            await tree.sync(guild=interaction.guild)
-        
-            synced = await tree.sync()
-        
-            await interaction.followup.send(
-                f"**Синхронизация завершена!**\n"
-                f"Synced (**{len(synced)}** commands).\n"
-            )
-        
-        except Exception as e:
-            print(f"[ERROR] Ошибка синхронизации: {e}")
-            await interaction.followup.send(f"Error {e}")
-            
-    @tree.command(name="привязать", description="Привязка игрового аккаунта.")
-    @app_commands.describe(key="Ваш игровой CKey")
-    async def link_public(interaction: discord.Interaction, key: str):
-        await interaction.response.defer(ephemeral=False)
-    
-        user = interaction.user
-        print(f"[DEBUG] Запущена команда для {user.name}, ключ: {key}")
-
-        try:
-            result = await CENTRAL.link_player(key, user.id)
-            print(f"[DEBUG] Получен ответ от API: {result}")
-
-            if result["status"] == "success":
-                embed = discord.Embed(
-                    title="🔗 Аккаунт успешно привязан",
-                    description=f"Аккаунт `{key}` теперь связан с {user.mention}",
-                    color=discord.Color.green()
-                )
-                embed.set_thumbnail(url=user.display_avatar.url)
-                embed.set_footer(text="Синхронизация SSCentral")
-            
-                await interaction.followup.send(embed=embed)
-            else:
-                await interaction.followup.send(f"**Ошибка:** {result['message']}")
-
-        except Exception as e:
-            print(f"[CRITICAL ERROR] Ошибка в команде привязать: {e}")
-            await interaction.followup.send("Произошла критическая ошибка при обработке запроса.")
-        
-    # --- КУДОСЫ  ---
 
     @tree.command(name="рейтинг", description="ТОП-10 игроков по кудосам.")
     async def rating(interaction: discord.Interaction):
         await interaction.response.defer()
         try:
-            top_data = await CENTRAL.get_kudos_rating(limit=10)
+            top_data = DB.get_kudos_rating(10)
             
             if not top_data:
-                await interaction.followup.send("Рейтинг пока пуст.")
-                return
-            
-            user_info = await CENTRAL.get_player_by_discord(interaction.user.id)
-            user_ckey = user_info.ckey if user_info else None
-            
-            description = ""
+                return await interaction.followup.send("Рейтинг пока пуст.")
 
-            for i, entry in enumerate(top_data, 1):
-                ckey = entry.get('ckey', 'Unknown')
-                score = entry.get('score', 0.0)
-                
-                rank_display = f"` {i}. `"
-                
-                name_display = f"**{ckey}**" if ckey == user_ckey else f"{ckey}"
-                
+            description = ""
+            for i, row in enumerate(top_data, 1):
+                ckey, score = row[0], row[1]
                 formatted_score = f"{score:.2f}".rstrip('0').rstrip('.')
-                
-                description += f"{rank_display} {name_display:15} — **{formatted_score}** ⭐\n"
+                description += f"` {i}. ` {ckey:15} — **{formatted_score} поинтов**\n"
             
             embed = discord.Embed(
-                title="🏆 Таблица лидеров репутации", 
-                color=0xFFD700,
+                title="Таблица лидеров репутации", 
+                color=0xFFD700, # Gold
                 description=description,
                 timestamp=discord.utils.utcnow()
             )
-            embed.set_footer(text="Данные SSCentral • Обновляется в реальном времени")
+            embed.set_footer(text="Тестовый режим • Данные Paradise")
             await interaction.followup.send(embed=embed)
-            
         except Exception as e:
             logging.error(f"Rating error: {e}")
-            await interaction.followup.send("Не удалось загрузить рейтинг.")
+            await interaction.followup.send("Ошибка при получении рейтинга.")
 
-    @tree.command(name="чек_кудосов", description="История похвал (для админов).")
-    # @app_commands.checks.has_any_role(*ADMIN_ROLES)
-    async def check_kudos(interaction: discord.Interaction, ckey: str):
+    @tree.command(name="мои_кудосы", description="Моя репутацию.")
+    async def kudos_check(interaction: discord.Interaction):
         await interaction.response.defer()
-        try:
-            history = await CENTRAL.admin_check_kudos(ckey)
-            if not history:
-                await interaction.followup.send(f"История для `{ckey}` не найдена.")
-                return
-
-            log_text = ""
-            for h in history:
-                dt = datetime.fromisoformat(h['timestamp'].replace('Z', '+00:00'))
-                date_str = dt.strftime("%d.%m %H:%M")
-                
-                log_text += f" `{date_str}` | От: `{h['giver']:12}` | Р: `{h['round_id']}`\n"
-
-            embed = discord.Embed(
-                title=f"📜 Логи репутации: {ckey}", 
-                description=log_text[:4000], 
-                color=0x5865F2,
-                timestamp=discord.utils.utcnow()
-            )
-            embed.set_footer(text=f"Всего записей: {len(history)}")
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            logging.error(f"Check kudos error: {e}")
-            await interaction.followup.send(f"Ошибка при получении логов.")
-
-    @tree.command(name="кудос", description="Показать вашу репутацию.")
-    async def kudos_me(interaction: discord.Interaction):
-        await interaction.response.defer()
+        player_links_info = await CENTRAL.get_player_by_discord(interaction.user.id)
+        
+        if not player_links_info:
+            await interaction.followup.send("Вы не привязаны.")
+            return 
         
         try:
-            target_id = interaction.user.id
-            data = await CENTRAL.get_player_kudos_stats(discord_id=target_id)
+            score = DB.get_player_kudos_count(player_links_info)
+            position = DB.get_player_position(score)
+            next_score = DB.get_next_player_score(score)
 
-            if not data:
-                await interaction.followup.send("Данные не найдены.")
-                return
-
-            score = data.get('total_score', 0.0)
-            position = data.get('position', 0)
-            next_score = data.get('next_player_score')
-            target_ckey = data.get('receiver', "Неизвестно")
-
-            embed = discord.Embed(title=f"🏆 Репутация игрока: {target_ckey}", timestamp=discord.utils.utcnow())
+            embed = discord.Embed(
+                title=f"Репутация: {player_links_info}", 
+                timestamp=discord.utils.utcnow()
+            )
+            
             bar_length = 10
             display_score = f"{score:.2f}".rstrip('0').rstrip('.')
 
             if score > 0:
                 if position == 1:
-                    embed.color = discord.Color.gold()
+                    embed.color = 0xFFD700 # Gold
                     bar = "🟧" * bar_length
-                    progress_text = "**Вы лидер рейтинга!**"
+                    progress_text = "**Лидер рейтинга!**"
                 else:
-                    embed.color = discord.Color.from_rgb(46, 204, 113)
-                    if next_score and next_score > score:
+                    embed.color = 0x2ECC71 # Green
+                    if next_score:
                         diff = next_score - score
                         percent = score / next_score
                         filled = min(max(1, round(percent * bar_length)), bar_length - 1)
                         bar = "🟩" * filled + "⬜" * (bar_length - filled)
-                        progress_text = f"До следующего места: **{f'{diff:.2f}'.rstrip('0').rstrip('.')}** поинтов"
+                        progress_text = f"До следующего места: **{diff:.2f}** поинтов"
                     else:
                         bar = "🟩" * 9 + "⬜" * 1
-                        progress_text = "Вы почти на вершине!"
+                        progress_text = "Почти на вершине!"
             else:
-                embed.color = discord.Color.light_gray()
+                embed.color = 0x95A5A6 # Gray
                 bar = "⬜" * bar_length
-                progress_text = "Не в рейтинге."
+                progress_text = "Поинтов пока нет."
                 position = "—"
-
-            embed.add_field(name="⭐ Очки похвал", value=f"**{display_score}**\n{bar}\n{progress_text}", inline=False)
-            embed.add_field(name="🏅 Место в ТОП", value=f"**#{position}**" if score > 0 else "**Вне рейтинга**", inline=True)
 
             if interaction.user.display_avatar:
                 embed.set_thumbnail(url=interaction.user.display_avatar.url)
-            embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
 
+            embed.add_field(name="Поинтов", value=f"**{display_score}**\n{bar}\n{progress_text}", inline=False)
+            embed.add_field(name="Место", value=f"**#{position}**" if score > 0 else "**Вне рейтинга**", inline=True)
+            
+            embed.set_footer(text=f"Запрос от: {interaction.user.display_name}")
+            
             await interaction.followup.send(embed=embed)
-
+            
         except Exception as e:
             logging.error(f"Kudos error: {e}")
-            await interaction.followup.send("Произошла ошибка при получении данных.")
+            await interaction.followup.send(f"Ошибка при получении данных игрока `{player_links_info}`.")
+            
+    @tree.command(name="кудос_логи", description="Логи похвал.")
+    @app_commands.describe(ckey="CKey игрока", limit="Количество записей (по умолчанию 20).")
+    @app_commands.checks.has_any_role(*ADMIN_ROLES)
+    async def check_kudos(interaction: discord.Interaction, ckey: str, limit: int = 20):
+        await interaction.response.defer()
+        try:
+            if limit > 100:
+                limit = 100
+            elif limit < 1:
+                limit = 1
+
+            history = DB.get_admin_kudos_info(ckey, limit=limit)
+            
+            if not history:
+                return await interaction.followup.send(f"{ckey} не найдена.")
+
+            log_text = ""
+            for h in history:
+                date_str = h.timestamp.strftime("%d.%m %H:%M")
+                log_text += f" `{date_str}` | from: {h.giver:12} | round id: `{h.round_id}` point `{h.points} pts`\n"
+
+            embed = discord.Embed(
+                title=f"Начисления у: {ckey}", 
+                description=log_text[:4000], 
+                color=0x5865F2 # Discord Blurple
+            )
+                
+            embed.set_footer(text=f"Показано записей: {len(history)}  (запрошено: {limit})")
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            logging.error(f"Check error: {e}")
+            await interaction.followup.send("Ошибка при чтении логов из базы.")
 
     # region Xenowl
 
