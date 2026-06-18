@@ -139,3 +139,20 @@ app_id="12345678"
 private_key_source="private-key.pem"
 installation_id="12345678"
 merge_upstream="merge_upstream.yml"
+
+[tgs]
+url = "http://127.0.0.1:5000/"
+user = "user"
+password = "password"
+
+[tgs.repositories.paradise]
+instance = 1
+branch = "master"
+
+[tgs.repositories.banda_station]
+instance = 2
+branch = "master"
+
+[tgs.repositories.banda_marine]
+instance = 3
+branch = "master"

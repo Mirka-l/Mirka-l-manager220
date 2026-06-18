@@ -14,6 +14,11 @@ from db.connect import connect_database
 from redis import asyncio as aioredis
 from github import Github, GithubIntegration
 
+from api.tgs import TGSClient
+import logging
+import aiohttp
+from typing_extensions import Literal
+
 # Setting up config
 with open("config.toml", "rb") as file:
     config = tomllib.load(file)
@@ -54,6 +59,10 @@ CENTRAL = Central(config["central"]["endpoint"],
                   config["central"]["bearer_token"],
                   config["central"]["boosty_discord_id"])
 
+aiohttp_session = None
+async def main():
+    global aiohttp_session
+    aiohttp_session = aiohttp.ClientSession()
 
 def run_bot():
     intents = discord.Intents.default()
@@ -568,6 +577,39 @@ def run_bot():
         channel = CHANNEL_CACHE.get("news")
         await channel.send(embed=embed, file=img_file, allowed_mentions=NO_MENTIONS)
 
+    # endregion
+    # region TGS
+
+    @tree.command(name="deploy", description="deploy build")
+    @app_commands.describe(build="Билд")
+    @app_commands.choices(build=[app_commands.Choice(name=build, value=build) for build in config["tgs"]["repositories"].keys()])
+    @app_commands.checks.has_any_role(*HEAD_ADMIN_ROLES)
+    async def update(interaction: discord.Interaction, build: str):
+        await interaction.response.defer()
+
+        if build not in config["tgs"]["repositories"]:
+            await interaction.followup.send(f"❌ Репозиторий не найден в конфигурации.", ephemeral=True)
+            return
+
+        repo_cfg = config["tgs"]["repositories"][build]
+        instance_id = repo_cfg['instance']
+
+        try:
+            tgs = TGSClient(config)
+            
+            print(f"DEBUG: Начинаю деплой для инстанса {instance_id}")
+            await tgs.deploy(instance_id)
+            
+            await interaction.followup.send(f"✅ Деплой **{build}** запущен!")
+
+        except ValueError as e:
+            print(f"DEBUG: Ошибка конфигурации: {e}")
+            await interaction.followup.send(f"❌ **Ошибка конфигурации:** {e}", ephemeral=True)
+            
+        except Exception as e:
+            print(f"DEBUG: Ошибка: {e}")
+            await interaction.followup.send(f"❌ Ошибка связи с TGS: {e}", ephemeral=True)
+    
     # endregion
 
     @client.event
